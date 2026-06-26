@@ -1,5 +1,6 @@
 import csv
 import lightgbm as lgb
+import numpy as np
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import log_loss, accuracy_score
@@ -18,9 +19,22 @@ def load_csv(path):
     if not rows:
         raise ValueError("No rows found in training CSV.")
 
-    feature_names = [name for name in reader.fieldnames if name != "label"]
-    X = [[float(row[name]) for name in feature_names] for row in rows]
-    y = [int(row["label"]) for row in rows]
+    # Select only numeric feature columns, excluding nonnumeric metadata like file names.
+    feature_names = []
+    for name in reader.fieldnames:
+        if name == "label":
+            continue
+        try:
+            float(rows[0][name])
+            feature_names.append(name)
+        except (TypeError, ValueError):
+            continue
+
+    if not feature_names:
+        raise ValueError("No numeric feature columns found in training CSV.")
+
+    X = np.array([[float(row[name]) for name in feature_names] for row in rows], dtype=np.float32)
+    y = np.array([int(row["label"]) for row in rows], dtype=np.int32)
     return X, y, feature_names
 
 
@@ -49,8 +63,6 @@ def main():
         num_boost_round=100,
         valid_sets=[train_data, val_data],
         valid_names=["train", "valid"],
-        early_stopping_rounds=10,
-        verbose_eval=False,
     )
 
     y_pred = bst.predict(X_val)
