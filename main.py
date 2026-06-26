@@ -1,9 +1,10 @@
 import lightgbm as lgb
-import numpy as np
+import random
 from cg.api import Observation, to_observation_class
 import os
-from cd.game import battle_start, battle_select, battle_finish
+from cg.game import battle_start, battle_select, battle_finish
 from cg.api import all_card_data, all_attack, search_begin, search_step, search_end, search_release
+from time import perf_counter as pf
 
 def read_deck_csv(file_path) -> list[int]:
     """Read deck.csv.
@@ -46,15 +47,24 @@ def agent_blueprint(obs_dict):
         # The deck must comply with the Pokémon Trading Card Game rules.
         return read_deck_csv()
 
-    legal_moves = obs.legal_moves
+    legal_moves = obs.select.option
 
     best_move = None
     highest_score = -float('inf')
 
-    for move_index in legal_moves:
-        search = search_begin(obs)
-
-        hypothetical_state = search_step(search.search_id, move_index)
+    for move in [m.type for m in legal_moves]:
+        your_index = obs.current.yourIndex
+        state = obs.current
+        active = state.players[1 - your_index].active
+        search = search_begin(
+            obs,
+            your_deck=random.sample(deck_0, state.players[your_index].deckCount), # Randomly select from deck.
+            your_prize=random.sample(deck_0, len(state.players[your_index].prize)), # Randomly select from deck.
+            opponent_deck=[1072] * state.players[1 - your_index].deckCount, # Fill with Snorlax (There is no deep meaning).
+            opponent_prize=[1] * len(state.players[1 - your_index].prize), # Fill with Basic Energy (There is no deep meaning)
+            opponent_hand=[1] * state.players[1 - your_index].handCount, # Fill with Basic Energy.
+            opponent_active=[1072] if len(active) > 0 and active[0] == None else []) # Fill with Snorlax.
+        hypothetical_state = search_step(search.searchId, move)
 
         board_features = extract_features(hypothetical_state)
 
@@ -62,19 +72,29 @@ def agent_blueprint(obs_dict):
 
         if score > highest_score:
             highest_score = score
-            best_move = move_index
+            best_move = move
 
-        search_end(search.search_id)
-        search_release(search.search_id)
-
+        search_end(search.searchId)
+        search_release(search.searchId)
+    print(f"Best move: {best_move} with score: {highest_score}")
     return best_move
+
+def stop_watch(st, message):
+    time = pf()-st
+    print(f"{message} took {time:.4f} seconds")
+
+st = pf()
 
 bst = lgb.Booster(model_file='pok_model.txt')
 deck_0_path = "deck.csv"
 deck_1_path = "deck.csv"
 
+stop_watch(st, "Model loaded")
+
 deck_0 = read_deck_csv(deck_0_path)
 deck_1 = read_deck_csv(deck_1_path)
+
+stop_watch(st, "Decks loaded")
 
 while True:
     obs, start_data = battle_start(deck_0, deck_1)
@@ -82,9 +102,12 @@ while True:
         print("Battle start failed.")
         break
 
+    stop_watch(st, "Battle started")
+
     while True:
         move = agent_blueprint(obs)
         obs = battle_select([move])
+        stop_watch(st, "Move selected")
         if obs is None:
             print("Battle finished.")
             break
